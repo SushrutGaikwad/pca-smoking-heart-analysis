@@ -1,0 +1,647 @@
+---
+title: "Homework 2: PCA (60 Points)"
+author: "Sushrut Gaikwad (50604159)"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+always_allow_html: true
+---
+
+```{r setup, results="hide", warning=F, message=F}
+# load libraries
+library(tidyverse)
+library(gridExtra)
+library(ggbiplot)
+knitr::opts_chunk$set(fig.width=6, fig.height=4)
+```
+
+# Part 1: PCA vs. Linear Regression. (6 points)
+
+Bob and Mary study height and weight dataset.
+
+```{r echo=FALSE}
+height <- c(151, 174, 138, 186, 128, 136, 179, 163, 152, 131)
+weight <- c(63, 81, 56, 91, 47, 57, 76, 72, 62, 48)
+relation <- lm(height ~ weight)
+
+plot(weight, height, col = "blue", main = "Height & Weight Regression",
+abline(
+  lm(height ~ weight)),
+  cex = 1.3, pch = 16,
+  xlab = "Weight (Kg)",
+  ylab = "Height (cm)"
+)
+```
+
+Mary used PCA with height and weight treated as features and Bob used linear regression (LR) with height treated as an outcome and weight as an explanatory variable. They argued which method is most appropriate here. A third student overheard it and said that LR and 1st principal component (PC) in PCA would give the same answer as they both do linear fit. The centering and scale of 1st-PC will be accounted in shift of LR ($\beta_0$) and relationship between $\beta_1$ and $\phi$'s can be easily obtained if needed.
+
+Is the third student right?
+
+**Answer**: No.
+
+What is the difference between optimization for linear regression coefficients and 1st-PC calculations?
+
+**Answer**:
+
+Optimization for linear regression is finding the coefficients $\beta_i$ by minimizing the sum of squared errors, i.e.,
+$$
+\min_{\beta_j} \sum_{i=1}^{n} \left(y_i - \left(\beta_0 + \sum_{j=1}^{p}\beta_j x_i \right)\right)^2
+$$
+where $y_i$ is the true output, and $\left(\beta_0 + \sum_{j=1}^{p}\beta_j x_i \right)$ is the predicted output. Here, I am considering that there are $p$ predictors in the data, and $n$ data points. This amounts to finding a best fitting line such that the *vertical distance*, also known as *residuals*, between the true output $y_i$ and the predicted output is the least. This is illustrated in the following plot.
+
+```{r echo=FALSE}
+plot(weight, height, col = "blue", main = "Height & Weight Regression",
+     cex = 1.3, pch = 16, xlab = "Weight (Kg)", ylab = "Height (cm)")
+abline(relation, col = "red", lwd = 2)
+
+fitted_values <- predict(relation)
+residuals <- height - fitted_values
+
+segments(weight, height, weight, fitted_values, col = "green", lwd = 2)
+
+legend("bottomright", legend = c("Line", "Residuals"),
+       col = c("red", "green"), lwd = 2)
+```
+
+On the other hand, the 1st-PC $\mathbf{z}_1$ of a set of predictors $\mathbf{x}_1$, $\mathbf{x}_2$, ..., $\mathbf{x}_p$ is found by taking the linear combination of these features, i.e.,
+$$
+\mathbf{z}_1 = \phi_{11}\mathbf{x_1} + \phi_{21}\mathbf{x_2} + \cdots + \phi_{p1}\mathbf{x_p}
+$$
+that have the largest variance subject to the following constraint:
+$$
+\sum_{j=1}^{p} \phi_{j1}^2 = 1
+$$
+We aim to find these parameters $\phi_{j1}$, known as *loadings*, to find the first principal component $\mathbf{z}_1$. This amounts to finding a line whose *perpendicular distance* from the points is the least. This is illustrated in the following plot.
+
+```{r echo=FALSE}
+coeffs <- coef(relation)
+slope <- coeffs[2]
+intercept <- coeffs[1]
+
+closest_point <- function(x0, y0, m, b) {
+  x1 <- (x0 + m * (y0 - b)) / (1 + m^2)
+  y1 <- m * x1 + b
+  return(c(x1, y1))
+}
+
+plot(weight, height, asp = 1, col = "blue", main = "Height & Weight Regression",
+     cex = 1.3, pch = 16, xlab = "Weight (Kg)", ylab = "Height (cm)")
+abline(relation, col = "red", lwd = 2)
+
+for (i in 1:length(weight)) {
+  point <- closest_point(weight[i], height[i], slope, intercept)
+  segments(weight[i], height[i], point[1], point[2], col = "purple", lwd = 2)
+}
+
+legend("bottomright", legend = c("Line", "Perpendicular Distances"),
+       col = c("red", "purple"), lwd = 2)
+```
+
+Minimizing the vertical distance of the points from the line (i.e., linear regression) and minimizing the perpendicular distance of the points from the line (i.e., finding the first PC) would generally result in two different lines. Hence, the third student is wrong.
+
+# Part 2: PCA Exercise. (27 points)
+
+In this exercise we will study UK Smoking Data (`smoking.R`, `smoking.rda`, or `smoking.csv`):
+
+## Description
+
+Survey data on smoking habits from the UK. The data set can be used for analyzing the demographic characteristics of smokers and types of tobacco consumed.
+
+### Format
+
+A data frame with **1,691 observations** on the following **12 variables**.
+
+| **Variable**            | **Description** |
+|-------------------------|----------------|
+| `gender`               | Gender with levels **Female** and **Male**. |
+| `age`                  | Age of the individual. |
+| `marital_status`       | Marital status with levels **Divorced**, **Married**, **Separated**, **Single**, and **Widowed**. |
+| `highest_qualification`| Highest education level with levels **A Levels**, **Degree**, **GCSE/CSE**, **GCSE/O Level**, **Higher/Sub Degree**, **No Qualification**, **ONC/BTEC**, and **Other/Sub Degree**. |
+| `nationality`          | Nationality with levels **British**, **English**, **Irish**, **Scottish**, **Welsh**, **Other**, **Refused**, and **Unknown**. |
+| `ethnicity`           | Ethnicity with levels **Asian**, **Black**, **Chinese**, **Mixed**, **White**, and **Refused/Unknown**. |
+| `gross_income`         | Gross income with levels **Under 2,600**, **2,600 to 5,200**, **5,200 to 10,400**, **10,400 to 15,600**, **15,600 to 20,800**, **20,800 to 28,600**, **28,600 to 36,400**, **Above 36,400**, **Refused**, and **Unknown**. |
+| `region`              | Region with levels **London**, **Midlands & East Anglia**, **Scotland**, **South East**, **South West**, **The North**, and **Wales**. |
+| `smoke`               | Smoking status with levels **No** and **Yes**. |
+| `amt_weekends`        | Number of cigarettes smoked per day on weekends. |
+| `amt_weekdays`        | Number of cigarettes smoked per day on weekdays. |
+| `type`               | Type of cigarettes smoked with levels **Packets**, **Hand-Rolled**, **Both/Mainly Packets**, and **Both/Mainly Hand-Rolled**. |
+
+**Source:** [National STEM Centre, Large Datasets from stats4schools](https://www.stem.org.uk/resources/elibrary/resource/28452/large-datasets-stats4schools). Obtained from [OpenIntro](https://www.openintro.org/data/index.php?data=smoking).
+
+## Read and Clean the Data
+
+### 2.1: Read the data from "smoking.R" or "smoking.rda". (3 points)
+Hint: Take a look at the `source` or `load` functions. There is also "smoking.csv" file for a reference.
+
+```{r}
+# Load data
+load("../data/smoking.rda")
+```
+
+Take a look into data
+```{r}
+head(smoking)
+```
+
+### There are many fields there so for this exercise lets only concentrate on `smoke`, `gender`, `age`, `marital_status`, `highest_qualification`, and `gross_income`. Create new `data.frame` with only these columns.
+
+```{r}
+smoking_subset <- smoking[
+  , c("smoke", "gender", "age", "marital_status", "highest_qualification", "gross_income")
+]
+```
+
+
+### 2.2: Omit all incomplete records. (3 points)
+
+```{r}
+smoking_subset <- na.omit(smoking_subset)
+```
+
+### 2.3: For PCA, features should be numeric. Some of fields are binary (`gender` and `smoke`) and can easily be converted to numeric type (with one and zero). Other fields like `marital_status` has more than two categories. Convert them to binary (e.g. `is_married`, `is_devorced`). Several features in the data set are ordinal (e.g., `gross_income` and `highest_qualification`). Convert them to some king of sensible level (note that levels in factors are not in order). (3 points)
+
+
+```{r}
+# Convert binary categorical variables to numeric
+smoking_subset$gender <- ifelse(smoking_subset$gender == "Male", 1, 0)
+smoking_subset$smoke <- ifelse(smoking_subset$smoke == "Yes", 1, 0)
+
+# One-hot encoding for marital status
+smoking_subset$is_married <- as.integer(smoking_subset$marital_status == "Married")
+smoking_subset$is_divorced <- as.integer(smoking_subset$marital_status == "Divorced")
+smoking_subset$is_separated <- as.integer(smoking_subset$marital_status == "Separated")
+smoking_subset$is_single <- as.integer(smoking_subset$marital_status == "Single")
+smoking_subset$is_widowed <- as.integer(smoking_subset$marital_status == "Widowed")
+
+# Drop original marital_status column
+smoking_subset$marital_status <- NULL
+
+# Assign numeric values to ordinal variables
+
+## Encoding highest qualification (ordered from lowest to highest education)
+education_levels <- c("No Qualification", "GCSE/CSE", "GCSE/O Level", "ONC/BTEC",
+                      "A Levels", "Other/Sub Degree", "Higher/Sub Degree", "Degree")
+
+smoking_subset$highest_qualification <- as.numeric(
+  factor(smoking_subset$highest_qualification,
+  levels = education_levels,
+  ordered = TRUE)
+)
+
+## Encoding gross income (ordered from lowest to highest)
+income_levels <- c("Under 2,600", "2,600 to 5,200", "5,200 to 10,400",
+                   "10,400 to 15,600", "15,600 to 20,800", "20,800 to 28,600",
+                   "28,600 to 36,400", "Above 36,400", "Refused", "Unknown")
+
+smoking_subset$gross_income <- as.numeric(factor(smoking_subset$gross_income, 
+                                                 levels = income_levels, 
+                                                 ordered = TRUE))
+```
+
+### 2.4: Do PCA on all columns except smoking status. (3 points)
+
+```{r}
+# Remove the `smoke` column
+pca_data <- smoking_subset[, !(names(smoking_subset) %in% c("smoke"))]
+
+# Standardize the data
+pca_data_scaled <- scale(pca_data)
+
+# Perform PCA
+pca_result <- prcomp(pca_data_scaled, center = TRUE, scale. = TRUE)
+
+# Add the PCA-transformed data back to the original dataset
+pca_transformed <- data.frame(pca_result$x, smoke = smoking_subset$smoke)
+
+# Summary of PCA
+summary(pca_result)
+```
+
+### 2.5: Make a scree plot. (3 points)
+
+```{r}
+# Compute explained variance
+explained_variance <- pca_result$sdev^2 / sum(pca_result$sdev^2)
+
+# Compute cumulative variance
+cumulative_variance <- cumsum(explained_variance)
+
+# Scree Plot: Proportion of variance explained
+scree_plot <- ggplot(
+  data.frame(PC = 1:length(explained_variance), Variance = explained_variance),
+  aes(x = PC, y = Variance)
+) +
+  geom_line(aes(group = 1), color = "red") +
+  geom_point(color = "red", size = 3) +
+  labs(
+    title = "Scree Plot of PCA",
+    x = "Principal Component",
+    y = "Proportion of Variance Explained"
+  ) +
+  theme_minimal()
+
+# Cumulative Variance Plot
+cumulative_plot <- ggplot(
+  data.frame(
+    PC = 1:length(cumulative_variance), CumulativeVariance = cumulative_variance
+  ),
+  aes(x = PC, y = CumulativeVariance)
+) +
+  geom_line(aes(group = 1), color = "blue") +
+  geom_point(color = "blue", size = 3) +
+  labs(
+    title = "Cumulative Variance Explained",
+    x = "Principal Component",
+    y = "Cumulative Proportion of Variance"
+  ) +
+  theme_minimal()
+
+# Display both plots side by side
+grid.arrange(scree_plot, cumulative_plot, ncol = 2)
+```
+
+#### Comment on the shape. If you need to reduce dimensions home many would you choose?
+
+The scree plot shows a steep drop in the proportion of variance explained till the first three principal components. After this, the drop is gradual. This means that most of the information is captured by the first three principal components. The cumulative variance plot shows a sharp rise initially and the cumulative proportion of variance explained reaches nearly 90% just around 6 principal components. After this, additional principal components contribute little new information.
+
+For choosing the principal components, we can use the elbow method by looking at the scree plot. This plot shows that the elbow occurs around at least the third principal component. Hence, we can keep at least three principal components. If we want to use the cumulative variance plot to select the number of principal components, we can choose that we want nearly 90% of the cumulative variance explained. In this case, we would want to choose at least six principal components.
+
+### 2.6: Make a biplot color points by smoking field. (3 points)
+
+```{r}
+# Convert `smoke` to a factor for coloring
+pca_transformed$smoke <- factor(
+  pca_transformed$smoke, levels = c(0, 1), labels = c("Non-Smoker", "Smoker")
+)
+
+# Create the PCA biplot
+ggbiplot(
+  pca_result, 
+  obs.scale = 1, 
+  var.scale = 1,
+  groups = pca_transformed$smoke,
+) +
+  scale_color_manual(values = c("green", "red")) +
+  labs(
+    title = "PCA Biplot Colored by Smoking Status",
+    color = "Smoking Status"
+  ) +
+  theme_minimal()
+```
+
+#### Comment on observed biplot.
+
+The observed plot shows the distribution of data points based on the first two principal components, i.e., PC1 and PC2, and the colors indicate smoking status. The arrows are the loadings that indicate how much each variable contributes to these two PCs. The distribution of smokers (red) and non-smokers (green) appears to be mixed, i.e., there is no clear separation between the two.
+
+#### Can we use first two PCs to discriminate smoking?
+
+As the distribution of smokers and non-smokers appears to be mixed, there is no clear boundary between the two. Hence, we cannot use the first two PCs to discriminate smoking.
+
+### 2.7: Based on the loading vectors can we name the PCs with some descriptive name? (3 points)
+
+Let us first have a look at the loading vectors.
+```{r}
+print(pca_result$rotation)
+```
+Based on these loading vectors, the variables most affecting the PCs are summarized in the following table.
+
+| **PC**  | **Descriptive Name**                      | **Main Positive Influences**                  | **Main Negative Influences**                 |
+|---------|------------------------------------------|----------------------------------------------|----------------------------------------------|
+| **PC1** | Socioeconomic & Marital Status         | `age`, `is_widowed`                         | `highest_qualification`, `gross_income`, `is_single` |
+| **PC2** | Married vs. Unmarried                  | `is_single`, `is_widowed`, `is_divorced`     | `is_married`                                |
+| **PC3** | Gender & Financial Independence        | `is_divorced`, `is_married`                 | `gender`, `gross_income`                    |
+| **PC4** | Divorced vs. Financial Stability      | `is_divorced`, `gross_income`               | `is_married`, `is_single`                   |
+| **PC5** | Separated vs. Others                   | `is_divorced`                               | `is_separated`                              |
+| **PC6** | Education & Gender                     | `gender`                                    | `highest_qualification`                     |
+| **PC7** | Income vs. Education Trade-off        | `highest_qualification`                     | `gross_income`                              |
+| **PC8** | Age & Income Stability                 | `is_widowed`                                | `age`, `is_single`                          |
+| **PC9** | Marital Flexibility                    | `is_married`, `is_single`, `is_widowed`     | *None dominant*                             |
+
+### 2.8: May be some of splits between categories or mapping to numerics should be revisited, if so what will you do differently? (3 points)
+
+I previously did ordered encoding on the columns `highest_qualification` and `gross_income`. These columns have a lot of categories. I would like to ordinally encode them differently in the following way.
+
+* `highest_qualification`:
+  - I previously encoded this column in the order `No Qualification`, `GCSE/CSE`, `GCSE/O Level`, `ONC/BTEC`, `A Levels`, `Other/Sub Degree`, `Higher/Sub Degree`, and `Degree`. However, I would like to group some of these into the same level and reduce the number of categories after encoding.
+* `gross_income`:
+  - My previous encoding order was `Under 2,600`, `2,600 to 5,200`, `5,200 to 10,400`, `10,400 to 15,600`, `15,600 to 20,800`, `20,800 to 28,600`, `28,600 to 36,400`, `Above 36,400`, `Refused`, and `Unknown`. Firstly I will convert the `Refused` and `Unknown` categories into `NA` and then drop the `NA` values. Next, I will again group some of these categories into the same level, reducing the number of categories after encoding.
+
+### 2.9: Follow your suggestion in 2.8 and redo PCA and biplot. (3 points)
+
+```{r}
+load("../data/smoking.rda")
+smoking_subset <- smoking[
+  ,
+  c("smoke", "gender", "age", "marital_status", "highest_qualification", "gross_income")
+]
+smoking_subset <- na.omit(smoking_subset)
+
+# Convert binary categorical variables to numeric
+smoking_subset$gender <- ifelse(smoking_subset$gender == "Male", 1, 0)
+smoking_subset$smoke <- ifelse(smoking_subset$smoke == "Yes", 1, 0)
+
+# One-hot encoding for marital status
+smoking_subset$is_married <- as.integer(smoking_subset$marital_status == "Married")
+smoking_subset$is_divorced <- as.integer(smoking_subset$marital_status == "Divorced")
+smoking_subset$is_separated <- as.integer(smoking_subset$marital_status == "Separated")
+smoking_subset$is_single <- as.integer(smoking_subset$marital_status == "Single")
+smoking_subset$is_widowed <- as.integer(smoking_subset$marital_status == "Widowed")
+
+# Drop original marital_status column
+smoking_subset$marital_status <- NULL
+
+# Assign numeric values to ordinal variables
+
+## Encoding highest qualification (ordered from lowest to highest education)
+education_levels <- c(
+  "No Qualification",         # Level 1 (Lowest)
+  "GCSE/CSE", "GCSE/O Level", # Level 2 (Secondary school)
+  "ONC/BTEC", "A Levels",     # Level 3 (Vocational vs. Academic)
+  "Other/Sub Degree", "Higher/Sub Degree", # Level 4/5 (Sub-degree qualifications)
+  "Degree"                    # Level 6 (Highest - Bachelor's degree)
+)
+
+smoking_subset$highest_qualification <- as.numeric(factor(
+  smoking_subset$highest_qualification, 
+  levels = education_levels, 
+  labels = c(1, 2, 2, 3, 3, 4, 4, 5), 
+  ordered = TRUE
+))
+
+## Encoding gross income (ordered from lowest to highest)
+income_levels <- c(
+  "Under 2,600", "2,600 to 5,200", "5,200 to 10,400",  # Low Income (1)
+  "10,400 to 15,600", "15,600 to 20,800", "20,800 to 28,600",  # Middle Income (2)
+  "28,600 to 36,400", "Above 36,400"  # High Income (3)
+)
+
+smoking_subset <- smoking_subset[
+  !(smoking_subset$gross_income %in% c("Refused", "Unknown")),
+]
+
+smoking_subset$gross_income <- as.numeric(factor(
+  smoking_subset$gross_income, 
+  levels = income_levels, 
+  labels = c(1, 1, 1, 2, 2, 2, 3, 3), 
+  ordered = TRUE
+))
+
+# Remove the `smoke` column
+pca_data <- smoking_subset[, !(names(smoking_subset) %in% c("smoke"))]
+
+# Standardize the data
+pca_data_scaled <- scale(pca_data)
+
+# Perform PCA
+pca_result <- prcomp(pca_data_scaled, center = TRUE, scale. = TRUE)
+
+# Add the PCA-transformed data back to the original dataset
+pca_transformed <- data.frame(pca_result$x, smoke = smoking_subset$smoke)
+
+# Summary of PCA
+summary(pca_result)
+```
+
+```{r}
+# Compute explained variance
+explained_variance <- pca_result$sdev^2 / sum(pca_result$sdev^2)
+
+# Compute cumulative variance
+cumulative_variance <- cumsum(explained_variance)
+
+# Scree Plot: Proportion of variance explained
+scree_plot <- ggplot(
+  data.frame(PC = 1:length(explained_variance), Variance = explained_variance),
+  aes(x = PC, y = Variance)
+) +
+  geom_line(aes(group = 1), color = "red") +
+  geom_point(color = "red", size = 3) +
+  labs(
+    title = "Scree Plot of PCA",
+    x = "Principal Component",
+    y = "Proportion of Variance Explained"
+  ) +
+  theme_minimal()
+
+# Cumulative Variance Plot
+cumulative_plot <- ggplot(
+  data.frame(
+    PC = 1:length(cumulative_variance), CumulativeVariance = cumulative_variance
+  ),
+  aes(x = PC, y = CumulativeVariance)
+) +
+  geom_line(aes(group = 1), color = "blue") +
+  geom_point(color = "blue", size = 3) +
+  labs(
+    title = "Cumulative Variance Explained",
+    x = "Principal Component",
+    y = "Cumulative Proportion of Variance"
+  ) +
+  theme_minimal()
+
+# Display both plots side by side
+grid.arrange(scree_plot, cumulative_plot, ncol = 2)
+```
+
+```{r}
+# Convert `smoke` to a factor for coloring
+pca_transformed$smoke <- factor(
+  pca_transformed$smoke, levels = c(0, 1), labels = c("Non-Smoker", "Smoker")
+)
+
+# Create the PCA biplot
+ggbiplot(
+  pca_result, 
+  obs.scale = 1, 
+  var.scale = 1,
+  groups = pca_transformed$smoke,
+) +
+  scale_color_manual(values = c("green", "red")) +
+  labs(
+    title = "PCA Biplot Colored by Smoking Status",
+    color = "Smoking Status"
+  ) +
+  theme_minimal()
+```
+
+# Part 3: Freestyle. (27 points)
+
+Get the data set from your final project (or find something suitable). The data set should have at least four variables and it shouldn't be used for the in class PCA examples (iris, mpg, diamonds, and so on).
+
+* Convert columns to proper format. (9 points)
+* Perform PCA. (3 points)
+* Make a scree plot. (3 points)
+* Make a biplot. (3 points)
+* Discuss your observations. (9 points)
+
+## Solution
+
+I will be using the heart failure dataset with the following features.
+
+| Variable              | Description                                                                                                               |
+|-----------------------|---------------------------------------------------------------------------------------------------------------------------|
+| `Age`                 | Age of the patient [years].                                                                                                |
+| `Sex`                 | Sex of the patient [`M`: Male, `F`: Female].                                                                               |
+| `ChestPainType`       | Chest pain type [`TA`: Typical Angina, `ATA`: Atypical Angina, `NAP`: Non-Anginal Pain, `ASY`: Asymptomatic].              |
+| `RestingBP`           | Resting blood pressure [mm Hg].                                                                                            |
+| `Cholesterol`         | Serum cholesterol [mm/dl].                                                                                                 |
+| `FastingBS`           | Fasting blood sugar [`1`: if `FastingBS` > 120 mg/dl, `0`: otherwise].                                                     |
+| `RestingECG`          | Resting electrocardiogram results [`Normal`: Normal, `ST`: having ST-T wave abnormality, `LVH`: showing probable or definite left ventricular hypertrophy by Estes' criteria]. |
+| `MaxHR`               | Maximum heart rate achieved [Numeric value between 60 and 202].                                                            |
+| `ExerciseAngina`      | Exercise-induced angina [`Y`: Yes, `N`: No].                                                                               |
+| `Oldpeak`             | Oldpeak = ST [Numeric value measured in depression].                                                                        |
+| `ST_Slope`            | The slope of the peak exercise ST segment [`Up`: up sloping, `Flat`: flat, `Down`: down sloping].                           |
+| `HeartDisease`        | Output class [`1`: heart disease, `0`: normal].                                                                            |
+```{r}
+heart_sample <- read_csv("../data/heart.csv")
+spec(heart_sample)
+```
+
+```{r}
+heart_data <- read_csv("../data/heart.csv", col_types = cols(
+  Age = col_double(),
+  Sex = col_character(),
+  ChestPainType = col_character(),
+  RestingBP = col_double(),
+  Cholesterol = col_double(),
+  FastingBS = col_double(),
+  RestingECG = col_character(),
+  MaxHR = col_double(),
+  ExerciseAngina = col_character(),
+  Oldpeak = col_double(),
+  ST_Slope = col_character(),
+  HeartDisease = col_double()
+))
+
+cols_to_factor <- c("Sex", "ChestPainType", "RestingECG", "ExerciseAngina", "ST_Slope")
+heart_data[cols_to_factor] <- lapply(heart_data[cols_to_factor], as.factor)
+```
+
+### Convert columns to proper format. (9 points)
+
+```{r}
+# Binary Encoding: Convert `Sex` and `ExerciseAngina` into 0/1
+heart_data$Sex <- ifelse(heart_data$Sex == "M", 1, 0)
+heart_data$ExerciseAngina <- ifelse(heart_data$ExerciseAngina == "Y", 1, 0)
+
+# Ordinal Encoding: Convert categorical variables into ordered factors
+heart_data$ChestPainType <- as.numeric(factor(heart_data$ChestPainType, 
+                                              levels = c("TA", "ATA", "NAP", "ASY"), 
+                                              ordered = TRUE))
+
+heart_data$RestingECG <- as.numeric(factor(heart_data$RestingECG, 
+                                           levels = c("Normal", "ST", "LVH"), 
+                                           ordered = TRUE))
+
+heart_data$ST_Slope <- as.numeric(factor(heart_data$ST_Slope, 
+                                         levels = c("Down", "Flat", "Up"), 
+                                         ordered = TRUE))
+
+# Ensure `HeartDisease` is numeric for classification
+heart_data$HeartDisease <- as.numeric(heart_data$HeartDisease)
+```
+
+### Perform PCA. (3 points)
+
+```{r}
+# Remove the `HeartDisease` column
+pca_data <- heart_data[, !(names(heart_data) %in% c("HeartDisease"))]
+
+# Standardize the data
+pca_data_scaled <- scale(pca_data)
+
+# Perform PCA
+pca_result <- prcomp(pca_data_scaled, center = TRUE, scale. = TRUE)
+
+# Add the PCA-transformed data back to the original dataset
+pca_transformed <- data.frame(pca_result$x, HeartDisease = heart_data$HeartDisease)
+
+# Summary of PCA
+summary(pca_result)
+```
+
+### Make a scree plot. (3 points)
+
+```{r}
+# Compute explained variance
+explained_variance <- pca_result$sdev^2 / sum(pca_result$sdev^2)
+
+# Compute cumulative variance
+cumulative_variance <- cumsum(explained_variance)
+
+# Scree Plot: Proportion of variance explained
+scree_plot <- ggplot(
+  data.frame(PC = 1:length(explained_variance), Variance = explained_variance),
+  aes(x = PC, y = Variance)
+) +
+  geom_line(aes(group = 1), color = "red") +
+  geom_point(color = "red", size = 3) +
+  labs(
+    title = "Scree Plot of PCA",
+    x = "Principal Component",
+    y = "Proportion of Variance Explained"
+  ) +
+  theme_minimal()
+
+# Cumulative Variance Plot
+cumulative_plot <- ggplot(
+  data.frame(
+    PC = 1:length(cumulative_variance), CumulativeVariance = cumulative_variance
+  ),
+  aes(x = PC, y = CumulativeVariance)
+) +
+  geom_line(aes(group = 1), color = "blue") +
+  geom_point(color = "blue", size = 3) +
+  labs(
+    title = "Cumulative Variance Explained",
+    x = "Principal Component",
+    y = "Cumulative Proportion of Variance"
+  ) +
+  theme_minimal()
+
+# Display both plots side by side
+grid.arrange(scree_plot, cumulative_plot, ncol = 2)
+```
+
+### Make a biplot. (3 points)
+
+```{r}
+# Convert `HeartDisease` to a factor for coloring
+pca_transformed$HeartDisease <- factor(
+  pca_transformed$HeartDisease,
+  levels = c(0, 1),
+  labels = c("No Heart Disease", "Has Heart Disease")
+)
+
+# Create the PCA biplot
+ggbiplot(
+  pca_result, 
+  obs.scale = 1, 
+  var.scale = 1,
+  groups = pca_transformed$HeartDisease,
+) +
+  scale_color_manual(values = c("green", "red")) +
+  labs(
+    title = "PCA Biplot Colored by Heart Disease Status",
+    color = "Heart Disease Status"
+  ) +
+  theme_minimal()
+```
+
+### Discuss your observations. (9 points)
+
+#### Scree plot
+
+* The scree plot shows a steep drop in the proportion of variance explained till the first four PCs. After this, the drop is gradual. Hence, using the elbow method, most of the information is captured by the first four PCs.
+
+* The cumulative proportion of variance explained is above 80% taking the first seven PCs.
+
+* So, if dimensionality reduction is the goal, then considering the first 4 to 7 PCs might be an optimal trade-off.
+
+#### Biplot
+
+* The red points (Has Heart Disease) and the green points (No Heart Disease) are somewhat separated, especially along the first PC. This means that PC1 carries significant information distinguishing heart disease status.
+
+* We can see that the variables `Age`, `ExerciseAngina`, `ChestPainType`, `MaxHR`, and `ST_Slope` are in the same direction as PC1. And as PC1 is somewhat able to separate people with heart disease from people who do not, these variables may play a significant role in this separation. Further, `Age`, `ExerciseAngina`, and `ChestPainType` are associated positively with PC1 (increasing them may contribute towards having heart disease) whereas `MaxHR`, and `ST_Slope` are negatively associated (increasing them may contribute towards not having heart disease).
